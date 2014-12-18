@@ -87,7 +87,7 @@ func decodeRecord(header *Header, binRecord *BinaryRecord, remoteAddr *net.UDPAd
 
     // Modify sampling settings
     decodedRecord.SamplingAlgorithm = uint8(0x3 & (decodedRecord.SamplingInterval >> 14))
-    decodedRecord.SamplingInterval = 0xc & decodedRecord.SamplingInterval
+    decodedRecord.SamplingInterval = 0x3fff & decodedRecord.SamplingInterval
 
     return decodedRecord
 }
