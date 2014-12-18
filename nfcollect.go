@@ -170,7 +170,7 @@ func main() {
         receiveBufferSizeBytes int
     )
     flag.StringVar(&inSource, "i", "0.0.0.0:2055", "Address and port to listen NetFlow packets")
-    flag.StringVar(&outDestination, "o", "127.0.0.1:5160", "Address and port to send decoded data")
+    flag.StringVar(&outDestination, "o", "-", "Address and port to send decoded data (set - to stdout)")
     flag.IntVar(&receiveBufferSizeBytes, "b", 212992, "Size of RxQueue, i.e. value for SO_RCVBUF in bytes")
     flag.Parse()
 
