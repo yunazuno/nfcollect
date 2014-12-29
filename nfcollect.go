@@ -7,6 +7,7 @@ import (
     "net"
     "time"
     "bytes"
+    "strings"
     "encoding/binary"
     "encoding/json"
 )
@@ -108,7 +109,9 @@ func pipeOutputToStdout(outputChannel chan DecodedRecord) {
     }
 }
 
-func pipeOutputToUDPSocket(outputChannel chan DecodedRecord, targetAddr string) {
+func pipeOutputToUDPSocket(outputChannel chan DecodedRecord, targetAddrs []string) {
+    targetAddr := targetAddrs[0]
+
     /* Setting-up the socket to send data */
     remote, err := net.ResolveUDPAddr("udp", targetAddr)
     if err != nil {
@@ -166,20 +169,31 @@ func main() {
     /* Parse command-line arguments */
     var (
         inSource string
+        outMethod string
         outDestination string
         receiveBufferSizeBytes int
     )
     flag.StringVar(&inSource, "i", "0.0.0.0:2055", "Address and port to listen NetFlow packets")
-    flag.StringVar(&outDestination, "o", "-", "Address and port to send decoded data (set - to stdout)")
+    flag.StringVar(&outMethod, "m", "stdout", "Output method")
+    flag.StringVar(&outDestination, "o", "", "Address and port to send decoded data")
     flag.IntVar(&receiveBufferSizeBytes, "b", 212992, "Size of RxQueue, i.e. value for SO_RCVBUF in bytes")
     flag.Parse()
 
+    /* Decode output target */
+    //schemaExp := mappedRegexp{regexp.MustCompile("(?P<schema>.+)://(?P<host>.*)/(?P<options>.*)")}
+    //matched := schemaExp.FindStringSubmatchMap(outDestination)
+    outDestinations := strings.Split(outDestination, ";")
+
     /* Create output pipe */
     outputChannel := make(chan DecodedRecord, 100)
-    if outDestination == "-" {
-        go pipeOutputToStdout(outputChannel)
-    } else {
-        go pipeOutputToUDPSocket(outputChannel, outDestination)
+    switch  outMethod {
+        case "stdout":
+            go pipeOutputToStdout(outputChannel)
+        case "udp":
+            go pipeOutputToUDPSocket(outputChannel, outDestinations)
+        default:
+            log.Fatalf("Unknown schema: %v\n", outMethod)
+
     }
 
     /* Start listerning on the specified port */
