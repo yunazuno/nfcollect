@@ -8,48 +8,51 @@ import (
     "time"
     "bytes"
     "strings"
+    "regexp"
+    "strconv"
     "math/rand"
     "encoding/binary"
     "encoding/json"
+    "github.com/t-k/fluent-logger-golang/fluent"
 )
 
 type Header struct {
-    Version uint16 `json:"version"`
-    FlowRecords uint16 `json:"flow_records"`
-    Uptime uint32 `json:"uptime"`
-    UnixSec uint32 `json:"unix_sec"`
-    UnixNsec uint32 `json:"unix_nsec"`
-    FlowSeqNum uint32 `json:"flow_seq_num"`
-    EngineType uint8 `json:"engine_type"`
-    EngineId uint8 `json:"engine_id"`
-    SamplingInterval uint16 `json:"sampling_interval"`
+    Version uint16 `json:"version" codec:"version"`
+    FlowRecords uint16 `json:"flow_records" codec:"flow_records"`
+    Uptime uint32 `json:"uptime" codec:"uptime"`
+    UnixSec uint32 `json:"unix_sec" codec:"unix_sec"`
+    UnixNsec uint32 `json:"unix_nsec" codec:"unix_nsec"`
+    FlowSeqNum uint32 `json:"flow_seq_num" codec:"flow_seq_num"`
+    EngineType uint8 `json:"engine_type" codec:"engine_type"`
+    EngineId uint8 `json:"engine_id" codec:"engine_id"`
+    SamplingInterval uint16 `json:"sampling_interval" codec:"sampling_interval"`
 
 }
 
 type RecordBase struct {
-    InputSnmp uint16 `json:"input_snmp"`
-    OutputSnmp uint16 `json:"output_snmp"`
-    InPkts uint32 `json:"in_pkts"`
-    InBytes uint32 `json:"in_bytes"`
-    FirstSwitched uint32 `json:"first_switched"`
-    LastSwitched uint32 `json:"last_switched"`
-    L4SrcPort uint16 `json:"l4_src_port"`
-    L4DstPort uint16 `json:"l4_dst_port"`
+    InputSnmp uint16 `json:"input_snmp" codec:"input_snmp"`
+    OutputSnmp uint16 `json:"output_snmp" codec:"output_snmp"`
+    InPkts uint32 `json:"in_pkts" codec:"in_pkts"`
+    InBytes uint32 `json:"in_bytes" codec:"in_bytes"`
+    FirstSwitched uint32 `json:"first_switched" codec:"first_switched"`
+    LastSwitched uint32 `json:"last_switched" codec:"last_switched"`
+    L4SrcPort uint16 `json:"l4_src_port" codec:"l4_src_port"`
+    L4DstPort uint16 `json:"l4_dst_port" codec:"l4_dst_port"`
     _ uint8
-    TcpFlags uint8 `json:"tcp_flags"`
-    Protocol uint8 `json:"protocol"`
-    SrcTos uint8 `json:"src_tos"`
-    SrcAs uint16 `json:"src_as"`
-    DstAs uint16 `json:"dst_as"`
-    SrcMask uint8 `json:"src_mask"`
-    DstMask uint8 `json:"dst_mask"`
+    TcpFlags uint8 `json:"tcp_flags" codec:"tcp_flags"`
+    Protocol uint8 `json:"protocol" codec:"protocol"`
+    SrcTos uint8 `json:"src_tos" codec:"src_tos"`
+    SrcAs uint16 `json:"src_as" codec:"src_as"`
+    DstAs uint16 `json:"dst_as" codec:"dst_as"`
+    SrcMask uint8 `json:"src_mask" codec:"src_mask"`
+    DstMask uint8 `json:"dst_mask" codec:"dst_mask"`
     _ uint16
 }
 
 type BinaryRecord struct {
-    Ipv4SrcAddrInt uint32 `json:"-"`
-    Ipv4DstAddrInt uint32 `json:"-"`
-    Ipv4NextHopInt uint32 `json:"-"`
+    Ipv4SrcAddrInt uint32 `json:"-" codec:"-"`
+    Ipv4DstAddrInt uint32 `json:"-" codec:"-"`
+    Ipv4NextHopInt uint32 `json:"-" codec:"-"`
 
     RecordBase
 }
@@ -58,11 +61,11 @@ type DecodedRecord struct {
     Header
     BinaryRecord
 
-    Host string `json:"host"`
-    SamplingAlgorithm uint8 `json:"sampling_algorithm"`
-    Ipv4SrcAddr string `json:"ipv4_src_addr"`
-    Ipv4DstAddr string `json:"ipv4_dst_addr"`
-    Ipv4NextHop string `json:"ipv4_next_hop"`
+    Host string `json:"host" codec:"host"`
+    SamplingAlgorithm uint8 `json:"sampling_algorithm" codec:"sampling_algorithm"`
+    Ipv4SrcAddr string `json:"ipv4_src_addr" codec:"ipv4_src_addr"`
+    Ipv4DstAddr string `json:"ipv4_dst_addr" codec:"ipv4_dst_addr"`
+    Ipv4NextHop string `json:"ipv4_next_hop" codec:"ipv4_next_hop"`
 }
 
 func intToIPv4Addr(intAddr uint32) net.IP {
@@ -152,6 +155,50 @@ func pipeOutputToUDPSocket(outputChannel chan DecodedRecord, targetAddrs []strin
     }
 }
 
+func pipeOutputToFluentd(outputChannel chan DecodedRecord, targetAddrs []string) {
+    /* Setting-up the socket to send data */
+    destNum := len(targetAddrs)
+    loggers := make([]*fluent.Fluent, destNum)
+    tags := make([]string, destNum)
+
+    re := regexp.MustCompile(`(.+):(\d+)/(.+)`)
+    for i, targetString := range targetAddrs {
+        /* decode targetAddr */
+        addrParts := re.FindStringSubmatch(targetString)
+        if addrParts == nil {
+            log.Fatalf("Unknow target address: %v\n", targetString)
+        }
+
+        targetAddr := addrParts[1]
+        targetPort, _ := strconv.Atoi(addrParts[2])
+        targetTag := addrParts[3]
+
+        logger, err := fluent.New(fluent.Config{FluentPort: targetPort, FluentHost: targetAddr})
+        if err != nil {
+            log.Fatalf("Flunent logger Error: %v\n", err)
+        }
+        loggers[i] = logger
+
+        defer loggers[i].Close()
+
+        tags[i] = targetTag
+    }
+
+    var record DecodedRecord
+    for {
+        record = <- outputChannel
+
+        go func (record DecodedRecord) {
+            idx := rand.Intn(destNum)
+            logger := loggers[idx]
+            tag := tags[idx]
+
+            logger.Post(tag, record)
+
+        }(record)
+    }
+}
+
 func handlePacket(buf *bytes.Buffer, remoteAddr *net.UDPAddr, outputChannel chan DecodedRecord) {
     header := Header{}
     err := binary.Read(buf, binary.BigEndian, &header)
@@ -199,6 +246,8 @@ func main() {
             go pipeOutputToStdout(outputChannel)
         case "udp":
             go pipeOutputToUDPSocket(outputChannel, outDestinations)
+        case "fluentd":
+            go pipeOutputToFluentd(outputChannel, outDestinations)
         default:
             log.Fatalf("Unknown schema: %v\n", outMethod)
 
