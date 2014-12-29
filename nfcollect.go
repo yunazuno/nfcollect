@@ -8,6 +8,7 @@ import (
     "time"
     "bytes"
     "strings"
+    "math/rand"
     "encoding/binary"
     "encoding/json"
 )
@@ -110,20 +111,26 @@ func pipeOutputToStdout(outputChannel chan DecodedRecord) {
 }
 
 func pipeOutputToUDPSocket(outputChannel chan DecodedRecord, targetAddrs []string) {
-    targetAddr := targetAddrs[0]
-
     /* Setting-up the socket to send data */
-    remote, err := net.ResolveUDPAddr("udp", targetAddr)
-    if err != nil {
-        log.Fatalf("Name resolution failed: %v\n", err)
-    }
+    destNum := len(targetAddrs)
+    remotes := make([]*net.UDPAddr, destNum)
+    connections := make([]*net.UDPConn, destNum)
 
-    conn, err := net.DialUDP("udp", nil, remote)
-    if err != nil {
-        log.Fatalf("Connection failed: %v\n", err)
-    }
+    for i, targetAddr := range targetAddrs {
+        remote, err := net.ResolveUDPAddr("udp", targetAddr)
+        if err != nil {
+            log.Fatalf("Name resolution failed: %v\n", err)
+        }
+        remotes[i] = remote
 
-    defer conn.Close()
+        connection, err := net.DialUDP("udp", nil, remotes[i])
+        if err != nil {
+            log.Fatalf("Connection failed: %v\n", err)
+        }
+        connections[i] = connection
+
+        defer connections[i].Close()
+    }
 
     var record DecodedRecord
     for {
@@ -135,6 +142,7 @@ func pipeOutputToUDPSocket(outputChannel chan DecodedRecord, targetAddrs []strin
                 log.Fatalf("json.Marshal failed: %v\n", err)
             }
 
+            conn := connections[rand.Intn(destNum)]
             conn.SetDeadline(time.Now().Add(3 * time.Second))
             _, err = conn.Write(buf)
             if err != nil {
